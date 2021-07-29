@@ -2,6 +2,9 @@ use anyhow::{Context, Result, bail};
 use std::{fs::{File}, io::Read};
 use rand::{Rng, prelude::ThreadRng};
 
+pub static VIDEO_WIDTH: usize = 64;
+pub static VIDEO_HEIGHT: usize = 32;
+
 static CH8_FONT: &'static [u8] = &[                    
     0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
     0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -48,7 +51,7 @@ impl Chip8 {
             registers: vec![0; 16],
             memory: vec![0; 4096],
             stack: vec![0; 16],
-            display: vec![0; 64 * 32],
+            display: vec![0; VIDEO_HEIGHT * VIDEO_WIDTH],
             kp_input: vec![0; 16],
             index: 0,
             pc: 0x200,
@@ -62,13 +65,13 @@ impl Chip8 {
 
         // load fontset into memory
         for ii in 0..80 {
-            s.memory[ii] = CH8_FONT[ii];
+            s.memory[0x50 + ii] = CH8_FONT[ii];
         }
 
         s
     }
 
-    pub fn read_rom(&mut self, path: &String) -> Result<()> {
+    pub fn read_rom(&mut self, path: &str) -> Result<()> {
         let mut buffer = Vec::new();
         let mut file = File::open(path).context("invalid rom path supplied")?;
 
@@ -96,46 +99,54 @@ impl Chip8 {
                 match opcode {
                     0x00E0 => self.cls(),
                     0x00EE => self.ret(),
-                    _ => { }
+                    _ => println!("missing(0) -> {}", opcode)
                 }
             }
             1 => self.jmp(opcode & 0x0FFF),
             2 => self.call(opcode & 0x0FFF),
-            3 => self.se_val(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 0, 0x00FF)),
-            4 => self.sne_val(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 0, 0x00FF)),
-            5 => self.se_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-            6 => self.ld_reg( shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 0, 0x00FF)),
-            7 => self.add_val(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 0, 0x00FF)),
+            3 => self.se_val(shift_u8(opcode, 8, 0x0F00), (opcode & 0x00FF) as u8),
+            4 => self.sne_val(shift_u8(opcode, 8, 0x0F00), (opcode & 0x00FF) as u8),
+            5 => self.se_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+            6 => self.ld_reg( shift_u8(opcode, 8, 0x0F00), (opcode & 0x00FF) as u8),
+            7 => self.add_val(shift_u8(opcode, 8, 0x0F00), (opcode & 0x00FF) as u8),
             8 => {
-                match shift_i32(opcode, 0, 0x000F) {
-                    0 => self.copy(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-                    1 => self.or(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-                    2 => self.and(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-                    3 => self.xor(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-                    4 => self.add_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
-                    5 => self.sub_regxy(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
+                match opcode & 0x000F {
+                    0 => self.copy(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+                    1 => self.or(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+                    2 => self.and(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+                    3 => self.xor(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+                    4 => self.add_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
+                    5 => self.sub_regxy(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
                     6 => self.shift_r(shift_u8(opcode, 8, 0x0F00)),
-                    7 => self.sub_regyx(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
+                    7 => self.sub_regyx(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
                     14 => self.shift_l(shift_u8(opcode, 8, 0x0F00)),
-                    _ => { }
+                    _ => println!("missing(8) -> {}", shift_i32(opcode, 0, 0x00FF))
                 }
             }
-            9 => self.sne_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x0F0)),
+            9 => self.sne_reg(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0)),
             10 => self.ld_indx(opcode & 0x0FFF),
             11 => self.jmpadd(opcode & 0x0FFF),
-            12 => self.rand_and(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 0, 0x00FF)),
+            12 => self.rand_and(shift_u8(opcode, 8, 0x0F00), (opcode & 0x00FF) as u8),
             13 => self.draw_pixel(shift_u8(opcode, 8, 0x0F00), shift_u8(opcode, 4, 0x00F0), opcode & 0x000F),
+            14 => {
+                match opcode & 0x00FF {
+                    158 => self.se_kp(shift_u8(opcode, 8, 0x0F00)),
+                    161 => self.sne_kp(shift_u8(opcode, 8, 0x0F00)),
+                    _ => println!("missing(E) -> {}", shift_i32(opcode, 0, 0x00FF))
+                }
+            }
             15 => {
-                match shift_i32(opcode, 0, 0x00FF) {
+                match opcode & 0x00FF {
                     7 => self.get_delay(shift_u8(opcode, 8, 0x0F00)),
                     10 => self.wait_key(shift_u8(opcode, 8, 0x0F00)),
                     21 => self.set_delay(shift_u8(opcode, 8, 0x0F00)),
                     24 => self.set_sound(shift_u8(opcode, 8, 0x0F00)),
                     30 => self.add_indx(shift_u8(opcode, 8, 0x0F00)),
+                    41 => self.get_font_chr(shift_u8(opcode, 8, 0x0F00)),
                     51 => self.encode_save(shift_u8(opcode, 8, 0x0F00)),
                     85 => self.save(shift_u8(opcode, 8, 0x0F00)),
                     101 => self.load(shift_u8(opcode, 8, 0x0F00)),
-                    _ => println!("missing -> {}", shift_i32(opcode, 0, 0x00FF))
+                    _ => println!("missing(F) -> {}", opcode & 0x00FF)
                 }
             }
             _ => println!("unimplemented instruction {}", instruction)
@@ -146,6 +157,10 @@ impl Chip8 {
         }
 
         if self.sound_timer > 0 {
+            if self.sound_timer == 1 {
+                print!("_______________________________beep")
+            }
+
             self.sound_timer -= 1;
         }
     }
@@ -162,6 +177,22 @@ impl Chip8 {
         self.display[index]
     }
 
+    pub fn set_input(&mut self, index: usize, is_pressed: bool) {
+        self.kp_input[index] = is_pressed as u32;
+    }
+
+    pub fn dump_registers(&mut self) -> String {
+        let mut str = String::new();
+
+        for ii in 0..self.registers.len() {
+            str += std::format!("r{}: {}\n", ii, self.registers[ii]).as_str();
+        }
+
+        str += std::format!("index: {}\n", self.index).as_str();
+
+        str
+    }
+
     // instruction(00E0): clear display
     pub fn cls(&mut self) {
         if self.debug_enabled {
@@ -171,6 +202,7 @@ impl Chip8 {
         for ii in &mut self.display { *ii = 0; }
 
         self.should_draw = true;
+        self.pc += 2;
     }
 
     // instruction(00EE): return from subroutine
@@ -260,6 +292,7 @@ impl Chip8 {
         }
 
         let val = self.registers[register as usize];
+
         self.registers[register as usize] = val.wrapping_add(value);
         self.pc += 2;
     }
@@ -281,7 +314,7 @@ impl Chip8 {
         }
 
         self.registers[register_x as usize] |= self.registers[register_y as usize];
-        self.registers[0x0F] = 0;
+        // self.registers[0x0F] = 0;
         self.pc += 2;
     }
 
@@ -292,7 +325,7 @@ impl Chip8 {
         }
 
         self.registers[register_x as usize] &= self.registers[register_y as usize];
-        self.registers[0x0F] = 0;
+        // self.registers[0x0F] = 0;
         self.pc += 2;
     }
 
@@ -303,7 +336,7 @@ impl Chip8 {
         }
 
         self.registers[register_x as usize] ^= self.registers[register_y as usize];
-        self.registers[0x0F] = 0;
+        // self.registers[0x0F] = 0;
         self.pc += 2;
     }
 
@@ -313,7 +346,7 @@ impl Chip8 {
             println!("add_reg r{}, r{}", register_x, register_y);
         }
 
-        if self.registers[register_x as usize] as i32 + self.registers[register_y as usize] as i32 > 0xFF {
+        if self.registers[register_y as usize] > (0xFF - self.registers[register_x as usize]) {
             self.registers[0x0F] = 1;
         } else {
             self.registers[0x0F] = 0;
@@ -330,10 +363,10 @@ impl Chip8 {
             println!("sub_regxy r{}, r{}", register_x, register_y);
         }
 
-        if (self.registers[register_x as usize] as i32) - (self.registers[register_y as usize] as i32) < 0 {
-            self.registers[0x0F] = 1;
-        } else {
+        if self.registers[register_y as usize] > self.registers[register_x as usize] {
             self.registers[0x0F] = 0;
+        } else {
+            self.registers[0x0F] = 1;
         }
 
         let val = self.registers[register_x as usize];
@@ -358,10 +391,10 @@ impl Chip8 {
             println!("sub_regyx r{}, r{}", register_x, register_y);
         }
 
-        if (self.registers[register_y as usize] as i32) - (self.registers[register_x as usize] as i32) < 0 {
-            self.registers[0x0F] = 1;
-        } else {
+        if self.registers[register_x as usize] > self.registers[register_y as usize] {
             self.registers[0x0F] = 0;
+        } else {
+            self.registers[0x0F] = 1;
         }
 
         let val = self.registers[register_y as usize];
@@ -419,26 +452,28 @@ impl Chip8 {
             println!("rand_and r{}, {}", register, value);
         }
 
-        self.registers[register as usize] = self.rng.gen_range(0..255) & value;                
+        self.registers[register as usize] = (self.rng.gen_range(0..0xFF)) & value;                
         self.pc += 2;
     }
 
-    // instruction(Dxyz): set pixel at x/y coord to weight z
-    pub fn draw_pixel(&mut self, register_x: u8, register_y: u8, weight: i32) {
+    // instruction(Dxyz): set pixel at x/y coord to height z
+    pub fn draw_pixel(&mut self, register_x: u8, register_y: u8, height: i32) {
         if self.debug_enabled {
-            println!("draw_pixel r{}, r{}, {}", register_x, register_y, weight);
+            println!("draw_pixel r{}, r{}, {}", register_x, register_y, height);
         }
 
-        let pixel_x = self.registers[register_x as usize];
-        let pixel_y = self.registers[register_y as usize];
-        let wt = 8;
+        let pixel_x = (self.registers[register_x as usize] as usize % VIDEO_WIDTH) as i32;
+        let pixel_y = (self.registers[register_y as usize] as usize % VIDEO_HEIGHT) as i32;
 
-        for ii in 0..weight {
-            let pixel = self.memory[(self.index as i32 + ii) as usize];
+        self.registers[0x0F as usize] = 0;
 
-            for j in 0..wt {
-                if (pixel & (0x80 >> j)) != 0 {
-                    let indx = ((pixel_x as i32 + j) + ((pixel_y as i32 + ii) * 64) % 2048) as usize;
+        for row in 0..height {
+            let pixel = self.memory[(self.index as i32 + row) as usize];
+
+            for column in 0..8 {
+                if (pixel & (0x80 >> column)) != 0 {
+                    let indx = (((pixel_y + row) * (VIDEO_WIDTH as i32) + (pixel_x + column)) % ((VIDEO_WIDTH * VIDEO_HEIGHT) as i32)) as usize;
+
                     if self.display[indx] == 1 {
                         self.registers[0x0F] = 1;
                     }
@@ -448,9 +483,37 @@ impl Chip8 {
             }
         }
 
-        self.registers[0x0F as usize] = 0;
-
         self.should_draw = true;
+        self.pc += 2;
+    }
+
+    // instruction(Ex9E): skip next instruction if key with value of register is pressed 
+    pub fn se_kp(&mut self, register: u8) {
+        if self.debug_enabled {
+            println!("se_kp r{} -> idx{}", register, self.registers[register as usize]);
+        }
+
+        let keynum = self.registers[register as usize];
+
+        if self.kp_input[keynum as usize] >= 1 {
+            self.pc += 2;
+        }
+
+        self.pc += 2;
+    }
+
+    // instruction(ExA1): skip next instruction if key with value of register is not pressed
+    pub fn sne_kp(&mut self, register: u8) {
+        if self.debug_enabled {
+            println!("sne_kp r{} -> idx{}", register, self.registers[register as usize]);
+        }
+
+        let keynum = self.registers[register as usize];
+
+        if self.kp_input[keynum as usize] == 0 {
+            self.pc += 2;
+        }
+
         self.pc += 2;
     }
 
@@ -519,6 +582,17 @@ impl Chip8 {
         self.pc += 2;
     }
 
+    // instruction(Fx29): gets font character for digit stored in register and sets index to it
+    pub fn get_font_chr(&mut self, register: u8) {
+        if self.debug_enabled {
+            println!("get_font_chr r{}", register);
+        }
+
+        let val = self.registers[register as usize];
+        self.index = (0x50 + (5 * val)) as u16;
+        self.pc += 2;
+    }
+
     // instruction(Fx33): saves most significant bits of register into memory at index
     pub fn encode_save(&mut self, register: u8) {
         if self.debug_enabled {
@@ -561,7 +635,7 @@ impl Chip8 {
     }
 }
 
-// bit shifting stuff
+// shift helpers
 pub fn shift_u8(value: i32, bits: i32, binary_and: i32) -> u8 {
     ((value & binary_and) >> bits) as u8
 }

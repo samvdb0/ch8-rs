@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use std::env;
 use std::ffi::c_void;
 use std::path::Path;
@@ -14,24 +14,38 @@ use std::time::Duration;
 
 mod ch8;
 use ch8::Chip8;
+use ch8::{VIDEO_HEIGHT, VIDEO_WIDTH};
 
 mod tickrate;
 use tickrate::Tickrate;
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    let rom = args.get(1).with_context(|| "usage: ch8-rs <rom_file>")?;
+    let mut rom = "";
     let mut is_debug: bool = false;
+    let mut is_step_mode: bool = false;
     let mut tr = Tickrate::new();
-    
-    for ii in &args {
+
+    let mut iter = args.iter().skip(1);
+    while let Some(ii) = iter.next() {        
         if ii.eq("--debug") {
             is_debug = true;
         }
+
+        if ii.eq("--step") {
+            is_step_mode = true;
+        }
+
+        if !ii.starts_with("--") {
+            rom = ii;
+        }
+    }
+
+    if rom == "" {
+        bail!("usage: ./ch8-rs [optional: --debug] <path_to_rom_file>")
     }
 
     let mut ch8 = Chip8::new(is_debug);
-
     match ch8.read_rom(rom) {
         Err(s) => bail!(s), // early exit if read fails
         Ok(()) => { }
@@ -39,9 +53,9 @@ fn main() -> Result<()> {
 
     let sdl_ctx= sdl2::init().unwrap();
     let video = sdl_ctx.video().unwrap();
-    let filename = String::from(Path::new(rom.as_str()).file_stem().unwrap().to_str().unwrap());
+    let filename = String::from(Path::new(rom).file_stem().unwrap().to_str().unwrap());
 
-    let window = video.window(std::format!("ch8-rs - playing: {}", filename).as_str(), 800, 600).position_centered().build().unwrap();
+    let window = video.window(std::format!("ch8-rs - playing: {}", filename).as_str(), VIDEO_WIDTH as u32 * 15, VIDEO_HEIGHT as u32 * 15).position_centered().build().unwrap();
     let mut canvas = window.into_canvas().build().unwrap();
 
     canvas.clear();
@@ -50,19 +64,38 @@ fn main() -> Result<()> {
     let texture_creator = canvas.texture_creator();
     let output_texture = texture_creator.create_texture_streaming(Some(PixelFormatEnum::ARGB8888), 64, 32).unwrap();
 
+    let mut advance = false;
     let mut events = sdl_ctx.event_pump().unwrap();
     'running: loop {
         for event in events.poll_iter() {
             match event {
-                Event::Quit { .. } => {
-                    break 'running;
-                },
-                Event::KeyDown { keycode: Some(Keycode::Escape), ..} => {
-                    break 'running;
-                }
+                Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), ..} => break 'running,
+                Event::KeyDown { keycode: Some(Keycode::Return), .. } => advance = true,
+                Event::KeyDown { keycode: Some(Keycode::F1), .. } => println!("{}", ch8.dump_registers()),
+                // pong
+                // Event::KeyDown { keycode: Some(Keycode::Z), .. } => ch8.set_input(1, true),
+                // Event::KeyUp { keycode: Some(Keycode::Z), .. } => ch8.set_input(1, false),
+                // Event::KeyDown { keycode: Some(Keycode::S), .. } => ch8.set_input(4, true),
+                // Event::KeyUp { keycode: Some(Keycode::S), .. } => ch8.set_input(4, false),
+                // Event::KeyDown { keycode: Some(Keycode::R), .. } => ch8.set_input(12, true),
+                // Event::KeyUp { keycode: Some(Keycode::R), .. } => ch8.set_input(12, false),
+                // Event::KeyDown { keycode: Some(Keycode::F), .. } => ch8.set_input(13, true),
+                // Event::KeyUp { keycode: Some(Keycode::F), .. } => ch8.set_input(13, false),
+
+                // space invaders
+                Event::KeyDown { keycode: Some(Keycode::Space), .. } => ch8.set_input(5, true),
+                Event::KeyUp { keycode: Some(Keycode::Space), .. } => ch8.set_input(5, false),
+                Event::KeyDown { keycode: Some(Keycode::Q), .. } => ch8.set_input(4, true),
+                Event::KeyUp { keycode: Some(Keycode::Q), .. } => ch8.set_input(4, false),
+                Event::KeyDown { keycode: Some(Keycode::D), .. } => ch8.set_input(6, true),
+                Event::KeyUp { keycode: Some(Keycode::D), .. } => ch8.set_input(6, false),
                 _ => { }
             }
         }
+
+        if is_step_mode && !advance {
+            continue;
+        } 
 
         ch8.cycle();
 
@@ -91,6 +124,7 @@ fn main() -> Result<()> {
         }
 
         canvas.window_mut().set_title(std::format!("ch8-rs - running {} | fps: {}", filename, tr.tick()).as_str())?;
+        advance = false;
         ::std::thread::sleep(Duration::from_micros(1500));
     }
 
